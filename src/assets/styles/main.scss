@@ -1,0 +1,78 @@
+// Import variables and mixins
+@import 'variables';
+@import 'mixins';
+
+// Reset and base styles
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: $font-family-sans;
+  background-color: $gray-50;
+  color: $gray-700;
+  line-height: 1.6;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+// Utility classes
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 $spacing-md;
+}
+
+.card {
+  @include card;
+}
+
+.btn {
+  @include button-base;
+
+  &--primary {
+    background: $primary;
+    color: $white;
+
+    &:hover:not(:disabled) {
+      background: $primary-hover;
+    }
+  }
+
+  &--secondary {
+    background: $gray-300;
+    color: $gray-700;
+
+    &:hover:not(:disabled) {
+      background: $gray-400;
+    }
+  }
+}
+
+// Grid system
+.grid {
+  display: grid;
+  gap: $spacing-md;
+
+  &--2 { grid-template-columns: repeat(2, 1fr); }
+  &--3 { grid-template-columns: repeat(3, 1fr); }
+  &--4 { grid-template-columns: repeat(4, 1fr); }
+
+  @include mobile {
+    &--2, &--3, &--4 {
+      grid-template-columns: 1fr;
+    }
+  }
+}
+
+// Utilities
+.p-6 { padding: $spacing-lg; }
+.mb-6 { margin-bottom: $spacing-lg; }
+.text-success { color: $success; }
+.text-danger { color: $danger; }
+.text-muted { color: $gray-500; }
+.font-bold { font-weight: 700; }
