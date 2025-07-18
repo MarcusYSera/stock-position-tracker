@@ -1,5 +1,23 @@
 {
+  "name": "stock-position-tracker",
+  "version": "1.0.0",
+  "description": "Stock position tracker with Vue.js client and Express server",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --kill-others \"npm run server\" \"npm run client\" --names \"🚀SERVER,🎯CLIENT\" --prefix-colors \"blue,green\"",
+    "client": "cd client && npm run serve",
+    "server": "cd server && npm run dev",
+    "build": "cd client && npm run build",
+    "install:client": "cd client && npm install",
+    "install:server": "cd server && npm install",
+    "install:all": "npm install && npm run install:client && npm run install:server",
+    "start": "cd server && npm start",
+    "lint": "cd client && npm run lint"
+  },
   "devDependencies": {
-    "concurrently": "^9.2.0"
-  }
+    "concurrently": "^8.2.2"
+  },
+  "keywords": ["vue", "express", "stock", "portfolio", "tracker"],
+  "author": "",
+  "license": "MIT"
 }

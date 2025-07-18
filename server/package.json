@@ -1,5 +1,5 @@
 {
-  "name": "yahoo-finance-proxy",
+  "name": "stock-position-tracker-server",
   "version": "1.0.0",
   "description": "CORS proxy server for Yahoo Finance API",
   "main": "index.js",
@@ -8,14 +8,14 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
+    "express": "^4.19.2",
     "cors": "^2.8.5",
-    "axios": "^1.6.0"
+    "axios": "^1.7.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.0"
+    "nodemon": "^3.1.0"
   },
-  "keywords": ["proxy", "yahoo-finance", "cors", "api"],
+  "keywords": ["proxy", "yahoo-finance", "cors", "api", "express"],
   "author": "",
   "license": "MIT"
 }
