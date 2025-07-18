@@ -4,7 +4,9 @@ import axios from 'axios'
 class YahooFinanceSearchService {
   constructor() {
     // Yahoo Finance search endpoints
-    this.searchUrl = 'https://query1.finance.yahoo.com/v1/finance/search'
+    // local host testing
+    this.searchUrl = 'http://localhost:3001/api/yahoo-finance/v1/finance/search'
+    // this.searchUrl = 'https://query1.finance.yahoo.com/v1/finance/search'
     this.quoteUrl = 'https://query1.finance.yahoo.com/v7/finance/quote'
     this.chartUrl = 'https://query1.finance.yahoo.com/v8/finance/chart'
     
