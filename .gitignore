@@ -2,10 +2,17 @@
 node_modules
 /dist
 
-
-# local env files
+# Environment files
+.env
 .env.local
 .env.*.local
+.env.development
+.env.production
+.env.development.local
+.env.production.local
+
+# Exception: you might want to track .env.example
+!.env.example
 
 # Log files
 npm-debug.log*
