@@ -1,82 +1,91 @@
-<!-- StockAutocompleteInput.vue - Smart stock search input with suggestions -->
 <template>
-  <div class="stock-autocomplete" ref="containerRef">
+  <div ref="containerRef" class="stock-autocomplete">
     <div class="input-container">
       <input
         ref="inputRef"
         v-model="inputValue"
+        type="text"
+        :placeholder="placeholder"
+        :disabled="disabled"
         @input="handleInput"
         @keydown="handleKeydown"
         @focus="handleFocus"
         @blur="handleBlur"
-        :class="['stock-input', { 'has-suggestions': stockSearch.hasResults }]"
-        :placeholder="placeholder"
-        :disabled="disabled"
+        class="stock-input"
         autocomplete="off"
         spellcheck="false"
       />
       
-      <!-- Loading indicator -->
-      <div v-if="stockSearch.isSearching" class="input-spinner">
-        <div class="spinner"></div>
-      </div>
-      
       <!-- Clear button -->
       <button
-        v-if="inputValue && !stockSearch.isSearching"
+        v-if="inputValue && inputValue.length > 0"
         @click="clearInput"
-        class="clear-button"
         type="button"
+        class="clear-button"
+        :disabled="disabled"
       >
         <X class="clear-icon" />
       </button>
+      
+      <!-- Loading indicator -->
+      <div v-if="isSearching" class="loading-indicator">
+        <div class="spinner"></div>
+      </div>
     </div>
 
-    <!-- Suggestions dropdown -->
+    <!-- Debug info - remove in production -->
+    <div v-if="typeof process !== 'undefined' && process.env.NODE_ENV === 'development'" style="background: #f0f0f0; padding: 10px; margin: 10px 0; font-size: 12px; border-radius: 4px;">
+      <strong>Debug Info:</strong><br>
+      hasResults: {{ hasResults }}<br>
+      hasError: {{ hasError }}<br>
+      isSearching: {{ isSearching }}<br>
+      resultsLength: {{ searchResults ? searchResults.length : 'undefined' }}<br>
+      searchError: {{ searchError }}<br>
+      showDropdown: {{ showDropdown }}<br>
+      inputLength: {{ (inputValue || '').length }}
+    </div>
+
+    <!-- Dropdown -->
     <transition name="dropdown">
-      <div
-        v-if="showDropdown && (stockSearch.hasResults || showPopular)"
-        class="suggestions-dropdown"
-      >
-        <!-- Popular stocks (when no search results) -->
-        <div v-if="showPopular" class="suggestions-section">
+      <div v-if="showDropdown" class="dropdown">
+        <!-- Popular stocks when empty input -->
+        <div v-if="showPopular && popularStocks && popularStocks.length > 0" class="suggestions-section">
           <div class="section-header">
             <TrendingUp class="section-icon" />
             Popular Stocks
           </div>
           <div
-            v-for="(stock, index) in popularStocks"
-            :key="`popular-${stock.symbol}`"
+            v-for="(stock, index) in popularStocks.slice(0, 8)"
+            :key="`popular-${stock.symbol || index}`"
             @click="selectSuggestion(stock)"
-            :class="[
-              'suggestion-item',
-              { 'selected': selectedIndex === index && !stockSearch.hasResults }
-            ]"
+            class="suggestion-item"
           >
-            <div class="stock-symbol">{{ stock.symbol }}</div>
-            <div class="stock-name">{{ stock.name }}</div>
+            <div class="stock-symbol">{{ stock.symbol || 'N/A' }}</div>
+            <div class="stock-name">{{ stock.name || 'No name available' }}</div>
+            <div v-if="stock.type" class="stock-type">{{ stock.type }}</div>
             <div class="stock-badge popular-badge">Popular</div>
           </div>
         </div>
 
-        <!-- Search results -->
-        <div v-if="stockSearch.hasResults" class="suggestions-section">
+        <!-- Search Results -->
+        <div v-if="searchResults && searchResults.length > 0" class="suggestions-section">
           <div class="section-header">
             <Search class="section-icon" />
-            Search Results
+            Found {{ searchResults.length }} results
           </div>
           <div
-            v-for="(stock, index) in stockSearch.searchResults"
-            :key="`result-${stock.symbol}`"
+            v-for="(stock, index) in searchResults"
+            :key="`result-${stock.symbol || index}`"
             @click="selectSuggestion(stock)"
             :class="[
               'suggestion-item',
-              { 'selected': stockSearch.selectedIndex === index }
+              { 'selected': selectedIndex === index }
             ]"
           >
             <div class="stock-symbol">{{ stock.symbol }}</div>
             <div class="stock-name">{{ stock.name }}</div>
             <div v-if="stock.type" class="stock-type">{{ stock.type }}</div>
+            <div v-if="stock.exchange" class="stock-exchange">{{ stock.exchange }}</div>
             <div v-if="stock.source" class="stock-badge source-badge">
               {{ stock.source }}
             </div>
@@ -84,15 +93,21 @@
         </div>
 
         <!-- No results -->
-        <div v-if="stockSearch.hasError" class="no-results">
+        <div v-if="searchResults && searchResults.length === 0 && searchError" class="no-results">
           <AlertCircle class="error-icon" />
-          <span>Search failed. Please try again.</span>
+          <span>{{ searchError }}</span>
         </div>
 
         <!-- Empty search -->
-        <div v-if="!stockSearch.hasResults && !showPopular && inputValue.length > 2 && !stockSearch.isSearching" class="no-results">
+        <div v-if="!hasResults && !showPopular && (inputValue || '').length > 2 && !isSearching && !hasError" class="no-results">
           <Search class="error-icon" />
           <span>No stocks found for "{{ inputValue }}"</span>
+        </div>
+
+        <!-- Loading state -->
+        <div v-if="isSearching" class="loading-state">
+          <div class="spinner"></div>
+          <span>Searching...</span>
         </div>
       </div>
     </transition>
@@ -127,7 +142,7 @@ export default {
     },
     placeholder: {
       type: String,
-      default: 'Search for stocks... (e.g., AAPL, Apple)'
+      default: 'Search for stocks...'
     },
     disabled: {
       type: Boolean,
@@ -144,85 +159,122 @@ export default {
   },
   emits: ['update:modelValue', 'stock-selected', 'validation-change'],
   setup(props, { emit }) {
-    const stockSearch = useStockSearch()
+    // DESTRUCTURE the composable properly - this fixes the reactivity issue!
+    const {
+      searchResults,
+      isSearching,
+      searchError,
+      hasResults,
+      hasError,
+      searchStocks,
+      handleKeyNavigation,
+      clearSearch,
+      getPopularStocks,
+      validateSymbol
+    } = useStockSearch()
+
     const containerRef = ref(null)
     const inputRef = ref(null)
-    const inputValue = ref(props.modelValue)
+    const inputValue = ref(props.modelValue || '')
     const showDropdown = ref(false)
     const validationMessage = ref('')
     const validationClass = ref('')
     const isValidating = ref(false)
     const selectedIndex = ref(-1)
 
-    // Popular stocks for initial suggestions
-    const popularStocks = computed(() => stockSearch.getPopularStocks())
+    // Popular stocks for initial suggestions (with safe defaults)
+    const popularStocks = computed(() => {
+      try {
+        return getPopularStocks() || []
+      } catch (error) {
+        console.warn('Error getting popular stocks:', error)
+        return []
+      }
+    })
     
-    // Show popular stocks when input is empty and focused
+    // Show popular stocks when input is empty and focused (with safe checks)
     const showPopular = computed(() => 
       props.showPopularOnFocus && 
-      inputValue.value.length === 0 && 
+      (inputValue.value?.length || 0) === 0 && 
       showDropdown.value &&
-      !stockSearch.hasResults
+      !hasResults.value
     )
 
-    // Watch for prop changes
+    // Watch for prop changes (safer)
     watch(() => props.modelValue, (newValue) => {
       if (newValue !== inputValue.value) {
-        inputValue.value = newValue
+        inputValue.value = newValue || ''
       }
     })
 
-    // Watch input value
+    // Watch input value (safer)
     watch(inputValue, (newValue) => {
-      emit('update:modelValue', newValue)
+      emit('update:modelValue', newValue || '')
       
-      if (newValue.length >= 1) {
-        stockSearch.searchStocks(newValue)
+      const safeValue = newValue || ''
+      if (safeValue.length >= 1) {
+        searchStocks(safeValue)
       } else {
-        stockSearch.clearSearch()
+        clearSearch()
         clearValidation()
       }
     })
 
-    // Handle input events
+    // Debug watchers for development
+    if (process.env.NODE_ENV === 'development') {
+      watch(searchResults, (newResults) => {
+        console.log('🔍 Vue component sees searchResults changed:', newResults?.length || 0, 'results')
+        console.log('🔍 hasResults:', hasResults.value)
+        console.log('🔍 hasError:', hasError.value)
+        console.log('🔍 searchError:', searchError.value)
+      }, { deep: true })
+    }
+
+    // Handle input events (safer)
     const handleInput = (event) => {
-      inputValue.value = event.target.value
+      const value = event?.target?.value || ''
+      inputValue.value = value
       
-      if (props.validateOnInput && inputValue.value.length > 0) {
-        validateSymbol(inputValue.value)
+      if (props.validateOnInput && value.length > 0) {
+        validateSymbolLocal(value)
       }
     }
 
-    // Handle keyboard navigation
+    // Handle keyboard navigation (safer)
     const handleKeydown = (event) => {
-      const handled = stockSearch.handleKeyNavigation(
+      if (!event) return
+      
+      const handled = handleKeyNavigation(
         event, 
-        inputValue.value, 
+        inputValue.value || '', 
         selectSuggestion
       )
 
       if (handled) return
 
       // Additional key handling
-      if (event.key === 'Tab' && stockSearch.hasResults) {
+      if (event.key === 'Tab' && hasResults.value) {
         // Auto-complete first result on tab
         event.preventDefault()
-        const firstResult = stockSearch.searchResults[0]
+        const results = searchResults.value || []
+        const firstResult = results[0]
         if (firstResult) {
           selectSuggestion(firstResult)
         }
       }
     }
 
-    // Handle focus
+    // Handle focus (safer)
     const handleFocus = () => {
       showDropdown.value = true
+      console.log('🔍 Focus - setting showDropdown to true')
       
-      if (inputValue.value.length === 0 && props.showPopularOnFocus) {
+      const safeValue = inputValue.value || ''
+      if (safeValue.length === 0 && props.showPopularOnFocus) {
         // Show popular stocks immediately
-      } else if (inputValue.value.length >= 1) {
+      } else if (safeValue.length >= 1) {
         // Re-search if we have input
-        stockSearch.searchStocks(inputValue.value, 0) // No delay on focus
+        searchStocks(safeValue, 0) // No delay on focus
       }
     }
 
@@ -230,52 +282,75 @@ export default {
     const handleBlur = () => {
       setTimeout(() => {
         showDropdown.value = false
-        stockSearch.clearSearch()
+        clearSearch()
       }, 150)
     }
 
-    // Select a suggestion
+    // Select a suggestion (much safer)
     const selectSuggestion = (stock) => {
-      inputValue.value = stock.symbol
-      showDropdown.value = false
-      stockSearch.clearSearch()
-      
-      // Emit the selected stock
-      emit('stock-selected', {
-        symbol: stock.symbol,
-        name: stock.name,
-        type: stock.type || 'Common Stock'
-      })
-
-      // Validate the selected symbol
-      if (props.validateOnInput) {
-        validateSymbol(stock.symbol)
+      if (!stock) {
+        console.warn('selectSuggestion called with undefined stock')
+        return
       }
+      
+      try {
+        const symbol = stock.symbol || ''
+        const name = stock.name || stock.shortname || stock.longname || ''
+        const type = stock.type || 'Stock'
+        
+        inputValue.value = symbol
+        showDropdown.value = false
+        clearSearch()
+        
+        // Emit the selected stock with safe defaults
+        emit('stock-selected', {
+          symbol: symbol,
+          name: name,
+          type: type,
+          exchange: stock.exchange,
+          source: stock.source
+        })
 
-      // Focus next input if available
-      nextTick(() => {
-        const form = containerRef.value?.closest('form')
-        if (form) {
-          const inputs = form.querySelectorAll('input')
-          const currentIndex = Array.from(inputs).indexOf(inputRef.value)
-          const nextInput = inputs[currentIndex + 1]
-          if (nextInput) {
-            nextInput.focus()
-          }
+        // Validate the selected symbol
+        if (props.validateOnInput && symbol) {
+          validateSymbolLocal(symbol)
         }
-      })
+
+        // Focus next input if available
+        nextTick(() => {
+          try {
+            const form = containerRef.value?.closest('form')
+            if (form) {
+              const inputs = form.querySelectorAll('input')
+              const currentIndex = Array.from(inputs).indexOf(inputRef.value)
+              const nextInput = inputs[currentIndex + 1]
+              if (nextInput) {
+                nextInput.focus()
+              }
+            }
+          } catch (error) {
+            console.warn('Error focusing next input:', error)
+          }
+        })
+      } catch (error) {
+        console.error('Error in selectSuggestion:', error)
+      }
     }
 
-    // Clear input
+    // Clear input (safer)
     const clearInput = () => {
       inputValue.value = ''
       clearValidation()
-      stockSearch.clearSearch()
-      inputRef.value?.focus()
+      clearSearch()
+      try {
+        inputRef.value?.focus()
+      } catch (error) {
+        console.warn('Error focusing input:', error)
+      }
     }
 
-    // Validate symbol
-    const validateSymbol = async (symbol) => {
+    // Validate symbol (safer) - renamed to avoid conflicts
+    const validateSymbolLocal = async (symbol) => {
       if (!symbol || symbol.length < 1) {
         clearValidation()
         return
@@ -285,7 +360,7 @@ export default {
       clearValidation()
 
       try {
-        const isValid = await stockSearch.validateSymbol(symbol)
+        const isValid = await validateSymbol(symbol)
         
         if (isValid) {
           validationMessage.value = `✓ ${symbol.toUpperCase()} is a valid stock symbol`
@@ -297,6 +372,7 @@ export default {
           emit('validation-change', { valid: false, symbol })
         }
       } catch (error) {
+        console.warn('Symbol validation error:', error)
         validationMessage.value = `✗ Unable to validate ${symbol.toUpperCase()}`
         validationClass.value = 'error'
         emit('validation-change', { valid: false, symbol, error: error.message })
@@ -312,36 +388,58 @@ export default {
       emit('validation-change', { valid: null })
     }
 
-    // Click outside to close
+    // Click outside to close (safer)
     const handleClickOutside = (event) => {
-      if (containerRef.value && !containerRef.value.contains(event.target)) {
-        showDropdown.value = false
-        stockSearch.clearSearch()
+      try {
+        if (containerRef.value && !containerRef.value.contains(event.target)) {
+          showDropdown.value = false
+          clearSearch()
+        }
+      } catch (error) {
+        console.warn('Error in handleClickOutside:', error)
       }
     }
 
     // Public methods
     const focus = () => {
-      inputRef.value?.focus()
+      try {
+        inputRef.value?.focus()
+      } catch (error) {
+        console.warn('Error focusing input:', error)
+      }
     }
 
     const validate = () => {
       if (inputValue.value) {
-        validateSymbol(inputValue.value)
+        validateSymbolLocal(inputValue.value)
       }
     }
 
-    // Lifecycle
+    // Lifecycle (safer)
     onMounted(() => {
-      document.addEventListener('click', handleClickOutside)
+      try {
+        document.addEventListener('click', handleClickOutside)
+      } catch (error) {
+        console.warn('Error adding click listener:', error)
+      }
     })
 
     onUnmounted(() => {
-      document.removeEventListener('click', handleClickOutside)
+      try {
+        document.removeEventListener('click', handleClickOutside)
+      } catch (error) {
+        console.warn('Error removing listeners:', error)
+      }
     })
 
     return {
-      stockSearch,
+      // Use destructured values directly
+      searchResults,
+      isSearching,
+      hasResults,
+      hasError,
+      searchError,
+      selectedIndex,
       containerRef,
       inputRef,
       inputValue,
@@ -351,7 +449,6 @@ export default {
       validationMessage,
       validationClass,
       isValidating,
-      selectedIndex,
       handleInput,
       handleKeydown,
       handleFocus,
@@ -373,228 +470,194 @@ export default {
 
 .input-container {
   position: relative;
-  display: flex;
-  align-items: center;
 }
 
 .stock-input {
   width: 100%;
-  padding: $spacing-sm $spacing-md;
-  padding-right: 2.5rem; // Space for spinner/clear button
-  border: 1px solid $gray-300;
-  border-radius: $radius;
-  font-size: $font-size-sm;
-  transition: all 0.2s ease;
+  padding: 12px 16px;
+  padding-right: 44px;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 16px;
+  transition: border-color 0.2s;
 
   &:focus {
     outline: none;
-    border-color: $primary;
-    box-shadow: 0 0 0 3px rgba($primary, 0.1);
-  }
-
-  &.has-suggestions {
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
   }
 
   &:disabled {
-    background: $gray-100;
-    color: $gray-500;
+    background-color: #f8fafc;
     cursor: not-allowed;
-  }
-
-  &::placeholder {
-    color: $gray-400;
-  }
-}
-
-.input-spinner {
-  position: absolute;
-  right: $spacing-sm;
-  display: flex;
-  align-items: center;
-  pointer-events: none;
-
-  .spinner {
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid $gray-300;
-    border-radius: 50%;
-    border-top-color: $primary;
-    animation: spin 1s linear infinite;
   }
 }
 
 .clear-button {
   position: absolute;
-  right: $spacing-sm;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
   background: none;
   border: none;
-  color: $gray-400;
   cursor: pointer;
-  padding: 2px;
-  border-radius: $radius-sm;
-  transition: all 0.2s ease;
-
+  padding: 4px;
+  border-radius: 4px;
+  color: #64748b;
+  
   &:hover {
-    color: $gray-600;
-    background: $gray-100;
-  }
-
-  .clear-icon {
-    width: 1rem;
-    height: 1rem;
+    color: #334155;
+    background-color: #f1f5f9;
   }
 }
 
-.suggestions-dropdown {
+.loading-indicator {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #e2e8f0;
+  border-top: 2px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.dropdown {
   position: absolute;
   top: 100%;
   left: 0;
   right: 0;
-  background: $white;
-  border: 1px solid $gray-300;
-  border-top: none;
-  border-bottom-left-radius: $radius;
-  border-bottom-right-radius: $radius;
-  box-shadow: $shadow-lg;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  z-index: 1000;
   max-height: 300px;
   overflow-y: auto;
-  z-index: 1000;
 }
 
 .suggestions-section {
-  .section-header {
-    display: flex;
-    align-items: center;
-    gap: $spacing-xs;
-    padding: $spacing-sm $spacing-md;
-    background: $gray-50;
-    border-bottom: 1px solid $gray-200;
-    font-size: $font-size-xs;
-    font-weight: 600;
-    color: $gray-600;
-    text-transform: uppercase;
-    letter-spacing: 0.025em;
+  padding: 8px 0;
+}
 
-    .section-icon {
-      width: 0.875rem;
-      height: 0.875rem;
-    }
-  }
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.section-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .suggestion-item {
   display: flex;
   align-items: center;
-  gap: $spacing-sm;
-  padding: $spacing-sm $spacing-md;
+  gap: 12px;
+  padding: 12px 16px;
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  transition: background-color 0.1s;
 
   &:hover,
   &.selected {
-    background: $primary;
-    color: $white;
-
-    .stock-name,
-    .stock-type {
-      color: rgba($white, 0.9);
-    }
-
-    .stock-badge {
-      background: rgba($white, 0.2);
-      color: $white;
-    }
-  }
-
-  &:last-child {
-    border-bottom-left-radius: $radius;
-    border-bottom-right-radius: $radius;
+    background-color: #f8fafc;
   }
 }
 
 .stock-symbol {
-  font-weight: 700;
-  font-size: $font-size-sm;
-  color: $gray-900;
+  font-weight: 600;
+  color: #1e293b;
   min-width: 60px;
 }
 
 .stock-name {
   flex: 1;
-  font-size: $font-size-sm;
-  color: $gray-600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: #64748b;
+  font-size: 14px;
 }
 
-.stock-type {
-  font-size: $font-size-xs;
-  color: $gray-500;
+.stock-type,
+.stock-exchange {
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .stock-badge {
-  font-size: $font-size-xs;
+  font-size: 10px;
   padding: 2px 6px;
-  border-radius: $radius-sm;
+  border-radius: 4px;
   font-weight: 500;
-
-  &.popular-badge {
-    background: rgba($success, 0.1);
-    color: $success;
-  }
-
-  &.source-badge {
-    background: rgba($primary, 0.1);
-    color: $primary;
-  }
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.no-results {
+.popular-badge {
+  background-color: #fef3c7;
+  color: #d97706;
+}
+
+.source-badge {
+  background-color: #dbeafe;
+  color: #2563eb;
+}
+
+.no-results,
+.loading-state {
   display: flex;
   align-items: center;
-  gap: $spacing-sm;
-  padding: $spacing-lg;
-  color: $gray-500;
-  font-size: $font-size-sm;
-  text-align: center;
-  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: #64748b;
+  font-size: 14px;
+}
 
-  .error-icon {
-    width: 1rem;
-    height: 1rem;
-  }
+.error-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .validation-message {
   display: flex;
   align-items: center;
-  gap: $spacing-xs;
-  margin-top: $spacing-xs;
-  font-size: $font-size-xs;
-  font-weight: 500;
-
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  
   &.success {
-    color: $success;
+    color: #059669;
   }
-
+  
   &.warning {
-    color: $warning;
+    color: #d97706;
   }
-
+  
   &.error {
-    color: $danger;
-  }
-
-  .validation-icon {
-    width: 0.875rem;
-    height: 0.875rem;
+    color: #dc2626;
   }
 }
 
-// Dropdown animation
+.validation-icon {
+  width: 12px;
+  height: 12px;
+}
+
 .dropdown-enter-active,
 .dropdown-leave-active {
   transition: all 0.2s ease;
@@ -603,26 +666,6 @@ export default {
 .dropdown-enter-from,
 .dropdown-leave-to {
   opacity: 0;
-  transform: translateY(-10px);
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-// Mobile responsive
-@include mobile {
-  .suggestions-dropdown {
-    max-height: 250px;
-  }
-
-  .suggestion-item {
-    padding: $spacing-md;
-  }
-
-  .stock-name {
-    white-space: normal;
-    line-height: 1.3;
-  }
+  transform: translateY(-4px);
 }
 </style>

@@ -5,11 +5,11 @@ import { finnhubLimiter } from './finnhubRateLimiter'
 class StockApiService {
   constructor() {
     // API Configuration
-    this.finnhubKey = process.env.VUE_APP_FINNHUB_KEY || ''
+    this.finnhubKey = (typeof process !== 'undefined' && process.env?.VUE_APP_FINNHUB_KEY) || ''
     this.finnhubUrl = 'https://finnhub.io/api/v1'
     
     // Fallback APIs
-    this.alphaVantageKey = process.env.VUE_APP_ALPHA_VANTAGE_KEY || 'demo'
+    this.alphaVantageKey = (typeof process !== 'undefined' && process.env?.VUE_APP_ALPHA_VANTAGE_KEY) || 'demo'
     this.alphaVantageUrl = 'https://www.alphavantage.co/query'
     this.yahooFinanceUrl = 'https://query1.finance.yahoo.com/v8/finance/chart'
     

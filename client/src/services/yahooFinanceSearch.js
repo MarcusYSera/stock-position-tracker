@@ -1,4 +1,4 @@
-// src/services/yahooFinanceSearch.js - Updated to use proxy server
+// src/services/yahooFinanceSearch.js - Complete file with all fixes
 import axios from 'axios'
 
 class YahooFinanceSearchService {
@@ -63,88 +63,85 @@ class YahooFinanceSearchService {
           enableNavLinks: true,
           enableEnhancedTrivialQuery: true
         },
-        timeout: 15000, // Increased timeout for proxy
+        timeout: 15000,
       })
 
       const data = response.data
-      if (!data?.quotes) {
-        throw new Error('Invalid Yahoo Finance search response')
+      
+      // Debug: Log the raw response
+      console.log(`📊 Raw Yahoo Finance Response:`, data)
+      
+      if (!data?.quotes || !Array.isArray(data.quotes)) {
+        throw new Error('Invalid Yahoo Finance search response - no quotes array')
       }
 
-      // Process and filter results
+      console.log(`📈 Found ${data.quotes.length} raw quotes from Yahoo Finance`)
+
+      // Filter and process results
       const results = data.quotes
-        .filter(quote => this.isValidStock(quote))
-        .map(quote => this.processSearchResult(quote, query))
+        .filter(quote => {
+          // Only include Yahoo Finance results (exclude Crunchbase, etc.)
+          if (!quote.isYahooFinance) {
+            console.log(`⏭️  Skipping non-Yahoo Finance result: ${quote.name || quote.symbol}`)
+            return false
+          }
+          
+          // Check if it's a valid stock/ETF
+          const isValid = this.isValidStock(quote)
+          if (!isValid) {
+            console.log(`⏭️  Skipping invalid quote: ${quote.symbol} (${quote.quoteType})`)
+          }
+          return isValid
+        })
+        .map(quote => {
+          const processed = this.processSearchResult(quote, query)
+          console.log(`✅ Processed: ${processed.symbol} - ${processed.name}`)
+          return processed
+        })
         .sort((a, b) => b.relevanceScore - a.relevanceScore)
         .slice(0, limit)
 
+      // Convert to plain objects to avoid reactivity issues
+      const plainResults = results.map(result => ({
+        symbol: result.symbol,
+        name: result.name,
+        type: result.type,
+        exchange: result.exchange,
+        displayText: result.displayText,
+        relevanceScore: result.relevanceScore,
+        source: result.source,
+        quoteType: result.quoteType,
+        marketState: result.marketState,
+        sector: result.sector,
+        industry: result.industry
+      }))
+
       // Cache results
-      this.setCache(cacheKey, results)
+      this.setCache(cacheKey, plainResults)
       
-      console.log(`✅ Yahoo Finance proxy returned ${results.length} results for "${query}"`)
-      return results
+      console.log(`✅ Yahoo Finance proxy returned ${plainResults.length} processed results for "${query}"`)
+      return plainResults
     } catch (error) {
       this.stats.errors++
       console.error('Yahoo Finance proxy search failed:', error.message)
       
       // Check if it's a proxy connection error
       if (error.code === 'ECONNREFUSED' || error.message.includes('ECONNREFUSED')) {
-        console.error('❌ Proxy server not running! Start with: npm run dev:full')
+        console.error('❌ Proxy server not running! Start with: npm run dev')
         throw new Error('Proxy server not available. Please start the backend server.')
       }
       
       // Return popular stocks as fallback
+      console.log(`🔄 Falling back to popular stocks for "${query}"`)
       return this.getPopularStocksFallback(query, limit)
     }
   }
 
-  // Get detailed stock information
-  async getStockDetails(symbols) {
-    if (!symbols || symbols.length === 0) return []
-    
-    // Convert single symbol to array
-    const symbolList = Array.isArray(symbols) ? symbols : [symbols]
-    const symbolsStr = symbolList.join(',')
-    
-    const cacheKey = `details_${symbolsStr}`
-    const cached = this.getFromCache(cacheKey)
-    if (cached) {
-      this.stats.cacheHits++
-      return Array.isArray(symbols) ? cached : cached[0]
-    }
-
-    this.stats.quoteCalls++
-
-    try {
-      const response = await axios.get(this.quoteUrl, {
-        params: {
-          symbols: symbolsStr,
-          fields: 'symbol,longName,shortName,regularMarketPrice,regularMarketChange,regularMarketChangePercent,marketState,quoteType,currency,exchange'
-        },
-        timeout: 15000
-      })
-
-      const quotes = response.data?.quoteResponse?.result || []
-      const results = quotes.map(quote => this.processQuoteResult(quote))
-      
-      this.setCache(cacheKey, results)
-      
-      return Array.isArray(symbols) ? results : results[0]
-    } catch (error) {
-      this.stats.errors++
-      console.error('Yahoo Finance proxy quote failed:', error.message)
-      
-      if (error.code === 'ECONNREFUSED') {
-        throw new Error('Proxy server not available. Please start the backend server.')
-      }
-      
-      throw error
-    }
-  }
-
-  // Get current stock price (optimized single call)
+  // Get current stock price (FIXED VERSION)
   async getCurrentPrice(symbol) {
     try {
+      console.log(`📊 Fetching current price for ${symbol}`)
+      
       const response = await axios.get(`${this.chartUrl}/${symbol}`, {
         params: {
           interval: '1d',
@@ -155,44 +152,152 @@ class YahooFinanceSearchService {
       })
 
       const data = response.data
-      if (!data?.chart?.result?.[0]?.meta) {
-        throw new Error('Invalid Yahoo Finance chart response')
+      console.log(`📊 Yahoo Finance chart response for ${symbol}:`, data)
+      
+      // Check if we have valid chart data
+      if (!data?.chart?.result?.length) {
+        throw new Error(`No chart data available for ${symbol}`)
       }
 
-      const meta = data.chart.result[0].meta
-      const price = meta.regularMarketPrice || meta.previousClose
-      const previousClose = meta.previousClose
-      const change = price - previousClose
-      const changePercent = (change / previousClose) * 100
+      const result = data.chart.result[0]
+      if (!result?.meta) {
+        throw new Error(`No meta data available for ${symbol}`)
+      }
 
-      return {
+      const meta = result.meta
+      console.log(`📊 Meta data for ${symbol}:`, meta)
+
+      // Safely extract price values with multiple fallbacks
+      const regularMarketPrice = meta.regularMarketPrice
+      const previousClose = meta.previousClose
+      const chartClose = meta.chartPreviousClose
+      
+      // Try to get a valid price value
+      let price = null
+      if (typeof regularMarketPrice === 'number' && !isNaN(regularMarketPrice)) {
+        price = regularMarketPrice
+      } else if (typeof previousClose === 'number' && !isNaN(previousClose)) {
+        price = previousClose
+      } else if (typeof chartClose === 'number' && !isNaN(chartClose)) {
+        price = chartClose
+      }
+
+      // Try to get a valid previous close value
+      let prevClose = null
+      if (typeof previousClose === 'number' && !isNaN(previousClose)) {
+        prevClose = previousClose
+      } else if (typeof chartClose === 'number' && !isNaN(chartClose)) {
+        prevClose = chartClose
+      } else if (price) {
+        prevClose = price // Use current price as fallback
+      }
+
+      // Validate we have at least a price
+      if (!price || price <= 0) {
+        throw new Error(`No valid price data found for ${symbol}. Received: regularMarketPrice=${regularMarketPrice}, previousClose=${previousClose}`)
+      }
+
+      // Use price as previous close if we don't have one
+      if (!prevClose) {
+        prevClose = price
+      }
+
+      // Calculate change safely
+      const change = price - prevClose
+      const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0
+
+      // Safely extract other values with defaults
+      const safeNumber = (value, defaultValue = 0) => {
+        return (typeof value === 'number' && !isNaN(value)) ? value : defaultValue
+      }
+
+      const priceResult = {
         symbol: symbol.toUpperCase(),
-        price: parseFloat(price.toFixed(2)),
-        change: parseFloat(change.toFixed(2)),
-        changePercent: parseFloat(changePercent.toFixed(2)),
+        price: Math.round(price * 100) / 100, // Safe rounding instead of toFixed
+        change: Math.round(change * 100) / 100,
+        changePercent: Math.round(changePercent * 100) / 100,
         currency: meta.currency || 'USD',
         marketState: meta.marketState || 'REGULAR',
         timestamp: new Date().toISOString(),
         source: 'Yahoo Finance (Proxy)',
-        high: parseFloat((meta.regularMarketDayHigh || 0).toFixed(2)),
-        low: parseFloat((meta.regularMarketDayLow || 0).toFixed(2)),
-        open: parseFloat((meta.regularMarketOpen || 0).toFixed(2)),
-        previousClose: parseFloat(previousClose.toFixed(2))
+        high: Math.round(safeNumber(meta.regularMarketDayHigh, price) * 100) / 100,
+        low: Math.round(safeNumber(meta.regularMarketDayLow, price) * 100) / 100,
+        open: Math.round(safeNumber(meta.regularMarketOpen, price) * 100) / 100,
+        previousClose: Math.round(prevClose * 100) / 100
       }
+
+      console.log(`✅ Successfully processed price for ${symbol}:`, priceResult)
+      return priceResult
+
     } catch (error) {
+      console.error(`❌ Error fetching current price for ${symbol}:`, error.message)
+      
       if (error.code === 'ECONNREFUSED') {
         throw new Error('Proxy server not available. Please start the backend server.')
       }
-      throw new Error(`Yahoo Finance proxy price error: ${error.message}`)
+      
+      // Provide more specific error messages
+      if (error.message.includes('No chart data available')) {
+        throw new Error(`Stock symbol ${symbol} not found or market is closed`)
+      }
+      
+      if (error.message.includes('No valid price data')) {
+        throw new Error(`Unable to retrieve current price for ${symbol}. The stock may be delisted or market data unavailable.`)
+      }
+      
+      throw new Error(`Failed to fetch price for ${symbol}: ${error.message}`)
+    }
+  }
+
+  // Validate if symbol exists (FIXED VERSION)
+  async validateSymbol(symbol) {
+    // Don't validate very short symbols (less than 1 character)
+    if (!symbol || symbol.length < 1) {
+      return false
+    }
+    
+    // Don't validate symbols that are too long (likely not valid)
+    if (symbol.length > 10) {
+      console.warn(`Symbol ${symbol} is too long, likely invalid`)
+      return false
+    }
+    
+    try {
+      console.log(`🔍 Validating symbol: ${symbol}`)
+      
+      // Try to get current price to validate the symbol
+      const price = await this.getCurrentPrice(symbol)
+      
+      // Consider symbol valid if we got price data
+      const isValid = price && 
+                     typeof price.price === 'number' && 
+                     price.price > 0 &&
+                     price.source !== 'Mock Data'
+      
+      console.log(`${isValid ? '✅' : '❌'} Symbol validation result for ${symbol}: ${isValid}`)
+      return isValid
+      
+    } catch (error) {
+      console.warn(`❌ Symbol validation failed for ${symbol}:`, error.message)
+      
+      // Consider some errors as "symbol not found" rather than validation failure
+      if (error.message.includes('not found') || 
+          error.message.includes('No chart data') ||
+          error.message.includes('delisted')) {
+        return false // Symbol doesn't exist
+      }
+      
+      // For other errors (network, etc.), we can't be sure, so return false
+      return false
     }
   }
 
   // Process search result with relevance scoring
   processSearchResult(quote, query) {
     const symbol = quote.symbol || ''
-    const name = quote.shortName || quote.longName || ''
+    const name = quote.shortname || quote.longname || ''
     const type = this.getReadableType(quote.quoteType)
-    const exchange = quote.exchange || ''
+    const exchange = quote.exchDisp || quote.exchange || ''
     
     return {
       symbol: symbol.toUpperCase(),
@@ -203,23 +308,9 @@ class YahooFinanceSearchService {
       relevanceScore: this.calculateRelevanceScore(query, symbol, name),
       source: 'Yahoo Finance (Proxy)',
       quoteType: quote.quoteType,
-      marketState: quote.marketState || 'REGULAR'
-    }
-  }
-
-  // Process quote result for detailed info
-  processQuoteResult(quote) {
-    return {
-      symbol: quote.symbol?.toUpperCase() || '',
-      name: quote.longName || quote.shortName || '',
-      type: this.getReadableType(quote.quoteType),
-      exchange: quote.exchange || '',
-      price: quote.regularMarketPrice || 0,
-      change: quote.regularMarketChange || 0,
-      changePercent: quote.regularMarketChangePercent || 0,
-      currency: quote.currency || 'USD',
       marketState: quote.marketState || 'REGULAR',
-      source: 'Yahoo Finance (Proxy)'
+      sector: quote.sector || '',
+      industry: quote.industry || ''
     }
   }
 
@@ -263,15 +354,26 @@ class YahooFinanceSearchService {
 
   // Check if quote result is a valid stock
   isValidStock(quote) {
+    // Must have required fields
+    if (!quote || !quote.symbol || !quote.shortname) {
+      return false
+    }
+    
+    // Must be a Yahoo Finance result (exclude Crunchbase, etc.)
+    if (!quote.isYahooFinance) {
+      return false
+    }
+    
     // Filter for stocks, ETFs, and major exchanges
     const validTypes = ['EQUITY', 'ETF', 'INDEX']
-    const validExchanges = ['NAS', 'NYQ', 'NCM', 'ASE', 'NMS', 'NGM', 'BTS', 'PNK']
+    const validExchanges = ['NMS', 'NYQ', 'NCM', 'ASE', 'NGM', 'BTS', 'PNK', 'WCB']
     
-    return quote &&
-           quote.symbol &&
-           quote.shortName &&
-           validTypes.includes(quote.quoteType) &&
-           (validExchanges.includes(quote.exchange) || !quote.exchange)
+    const hasValidType = validTypes.includes(quote.quoteType)
+    const hasValidExchange = validExchanges.includes(quote.exchange) || !quote.exchange
+    
+    console.log(`🔍 Validating ${quote.symbol}: type=${quote.quoteType} exchange=${quote.exchange} valid=${hasValidType && hasValidExchange}`)
+    
+    return hasValidType && hasValidExchange
   }
 
   // Fallback popular stocks when search fails
@@ -354,17 +456,6 @@ class YahooFinanceSearchService {
       cacheSize: this.searchCache.size,
       apiProvider: 'Yahoo Finance (Proxy)',
       unlimited: true
-    }
-  }
-
-  // Validate if symbol exists
-  async validateSymbol(symbol) {
-    try {
-      await this.getCurrentPrice(symbol)
-      return true
-    } catch (error) {
-      console.warn(`Symbol validation failed for ${symbol}:`, error.message)
-      return false
     }
   }
 }

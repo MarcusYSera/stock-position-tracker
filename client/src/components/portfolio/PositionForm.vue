@@ -1,352 +1,494 @@
 <!-- Enhanced PositionForm.vue with Smart Stock Autocomplete -->
 <template>
   <div class="position-form">
-    <h3 class="form-title">Add New Position</h3>
-    <div class="form-grid">
-      <!-- Stock Symbol with Autocomplete -->
-      <div class="form-group form-group--symbol">
-        <label class="form-label">
-          Stock Symbol *
-          <span class="help-text">Start typing to search...</span>
-        </label>
-        <StockAutocompleteInput
-          v-model="formData.symbol"
-          placeholder="Search stocks... (e.g., AAPL, Apple, Microsoft)"
-          :validate-on-input="true"
-          @stock-selected="handleStockSelected"
-          @validation-change="handleSymbolValidation"
-        />
+    <div class="form-header">
+      <h2>Add New Position</h2>
+      <button @click="$emit('close')" class="close-button">
+        <X class="close-icon" />
+      </button>
+    </div>
+
+    <!-- Success/Error Messages -->
+    <div v-if="successMessage" class="message success-message">
+      <CheckCircle class="message-icon" />
+      {{ successMessage }}
+    </div>
+
+    <div v-if="errorMessage" class="message error-message">
+      <AlertCircle class="message-icon" />
+      {{ errorMessage }}
+    </div>
+
+    <div v-if="warningMessage" class="message warning-message">
+      <AlertTriangle class="message-icon" />
+      {{ warningMessage }}
+    </div>
+
+    <form @submit.prevent="handleSubmit" class="form">
+      <!-- Stock Symbol Input -->
+      <div class="form-group">
+        <label for="symbol" class="form-label required">Stock Symbol</label>
+        <StockAutocompleteInput v-model="formData.symbol" placeholder="e.g., AAPL, GOOGL, MSFT"
+          :validate-on-input="true" @stock-selected="onStockSelected" @validation-change="onValidationChange" />
+        <div v-if="symbolValidation.message" :class="['validation-message', symbolValidation.class]">
+          {{ symbolValidation.message }}
+        </div>
       </div>
-      
-      <!-- Company Name with Smart Suggestions -->
-      <div class="form-group form-group--name">
-        <label class="form-label">
-          Company Name *
-          <span v-if="isSymbolValid" class="auto-filled">Auto-filled</span>
-        </label>
-        <div class="name-input-container">
-          <input 
-            v-model="formData.name" 
-            type="text" 
-            class="form-input"
-            :class="{ 'auto-filled': isAutoFilled }"
-            placeholder="e.g., Apple Inc."
-            required
-            :disabled="loading"
-          >
-          <button
-            v-if="formData.symbol && !formData.name"
-            @click="fetchCompanyName"
-            type="button"
-            class="fetch-name-btn"
-            :disabled="isFetchingName"
-          >
-            <Search v-if="!isFetchingName" class="btn-icon" />
-            <div v-else class="loading-spinner"></div>
+
+      <!-- Company Name Input -->
+      <div class="form-group">
+        <label for="name" class="form-label required">Company Name</label>
+        <div class="input-with-button">
+          <input id="name" v-model="formData.name" type="text" placeholder="e.g., Apple Inc." class="form-input"
+            :class="{ 'auto-filled': isAutoFilled }" required />
+          <button type="button" @click="fetchCompanyName" :disabled="!formData.symbol || isFetchingName"
+            class="fetch-button">
+            <Loader v-if="isFetchingName" class="button-icon spinning" />
+            <Building v-else class="button-icon" />
             Fetch Name
           </button>
         </div>
-      </div>
-      
-      <!-- Shares -->
-      <div class="form-group">
-        <label class="form-label">Number of Shares *</label>
-        <input 
-          v-model="formData.shares" 
-          type="number" 
-          step="0.01"
-          class="form-input" 
-          placeholder="100"
-          required
-          :disabled="loading"
-        >
-      </div>
-      
-      <!-- Purchase Price -->
-      <div class="form-group">
-        <label class="form-label">Purchase Price *</label>
-        <div class="price-input-container">
-          <span class="currency-symbol">$</span>
-          <input 
-            v-model="formData.purchasePrice" 
-            type="number" 
-            step="0.01"
-            class="form-input price-input" 
-            placeholder="150.00"
-            required
-            :disabled="loading"
-          >
+        <div v-if="isAutoFilled" class="auto-fill-notice">
+          <Info class="info-icon" />
+          Auto-filled from stock data
         </div>
       </div>
-      
-      <!-- Current Price with Auto-fetch -->
+
+      <!-- Number of Shares -->
       <div class="form-group">
-        <label class="form-label">
-          Current Price *
-          <button
-            v-if="formData.symbol && isSymbolValid"
-            @click="fetchCurrentPrice"
-            type="button"
-            class="fetch-price-btn"
-            :disabled="isFetchingPrice"
-          >
-            <RefreshCw v-if="!isFetchingPrice" class="btn-icon" />
-            <div v-else class="loading-spinner"></div>
-            Get Live Price
-          </button>
-        </label>
-        <div class="price-input-container">
+        <label for="shares" class="form-label required">Number of Shares</label>
+        <input id="shares" v-model.number="formData.shares" type="number" step="0.001" min="0.001" placeholder="100"
+          class="form-input" required />
+      </div>
+
+      <!-- Purchase Price -->
+      <div class="form-group">
+        <label for="purchasePrice" class="form-label required">Purchase Price</label>
+        <div class="currency-input">
           <span class="currency-symbol">$</span>
-          <input 
-            v-model="formData.currentPrice" 
-            type="number" 
-            step="0.01"
-            class="form-input price-input"
-            :class="{ 'live-price': hasLivePrice }"
-            placeholder="155.00"
-            required
-            :disabled="loading"
-          >
-          <div v-if="priceSource" class="price-source">
-            via {{ priceSource }}
+          <input id="purchasePrice" v-model.number="formData.purchasePrice" type="number" step="0.01" min="0.01"
+            placeholder="150.00" class="form-input currency-input-field" required />
+        </div>
+      </div>
+
+      <!-- Current Price -->
+      <div class="form-group">
+        <label for="currentPrice" class="form-label required">Current Price</label>
+        <div class="input-with-button">
+          <div class="currency-input">
+            <span class="currency-symbol">$</span>
+            <input id="currentPrice" v-model.number="formData.currentPrice" type="number" step="0.01" min="0.01"
+              placeholder="155.00" class="form-input currency-input-field" :class="{ 'live-price': hasLivePrice }"
+              required />
+          </div>
+          <button type="button" @click="fetchCurrentPrice" :disabled="!formData.symbol || isFetchingPrice"
+            class="fetch-button">
+            <Loader v-if="isFetchingPrice" class="button-icon spinning" />
+            <DollarSign v-else class="button-icon" />
+            Fetch Price
+          </button>
+        </div>
+        <div v-if="hasLivePrice && priceSource" class="live-price-notice">
+          <TrendingUp class="info-icon" />
+          Live price from {{ priceSource }}
+        </div>
+      </div>
+
+      <!-- Purchase Date -->
+      <div class="form-group">
+        <label for="purchaseDate" class="form-label required">Purchase Date</label>
+        <input id="purchaseDate" v-model="formData.purchaseDate" type="date" class="form-input" :max="today" required />
+      </div>
+
+      <!-- Target Price (Optional) -->
+      <div class="form-group">
+        <label for="targetPrice" class="form-label">Target Price (Optional)</label>
+        <div class="currency-input">
+          <span class="currency-symbol">$</span>
+          <input id="targetPrice" v-model.number="formData.targetPrice" type="number" step="0.01" min="0.01"
+            placeholder="200.00" class="form-input currency-input-field" />
+        </div>
+      </div>
+
+      <!-- Position Summary -->
+      <div v-if="positionSummary.isValid" class="position-summary">
+        <h3>Position Summary</h3>
+        <div class="summary-grid">
+          <div class="summary-item">
+            <span class="summary-label">Total Investment:</span>
+            <span class="summary-value">${{ positionSummary.totalInvestment }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Current Value:</span>
+            <span class="summary-value">${{ positionSummary.currentValue }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Gain/Loss:</span>
+            <span :class="['summary-value', positionSummary.gainLossClass]">
+              ${{ positionSummary.gainLoss }} ({{ positionSummary.gainLossPercent }}%)
+            </span>
           </div>
         </div>
       </div>
-      
-      <!-- Purchase Date -->
-      <div class="form-group">
-        <label class="form-label">Purchase Date *</label>
-        <input 
-          v-model="formData.purchaseDate" 
-          type="date" 
-          class="form-input"
-          required
-          :disabled="loading"
-        >
-      </div>
-      
-      <!-- Target Price -->
-      <div class="form-group">
-        <label class="form-label">Target Price (Optional)</label>
-        <div class="price-input-container">
-          <span class="currency-symbol">$</span>
-          <input 
-            v-model="formData.targetPrice" 
-            type="number" 
-            step="0.01"
-            class="form-input price-input" 
-            placeholder="200.00"
-            :disabled="loading"
-          >
-        </div>
-      </div>
-    </div>
 
-    <!-- Position Preview -->
-    <div v-if="showPreview" class="position-preview">
-      <h4 class="preview-title">Position Preview</h4>
-      <div class="preview-grid">
-        <div class="preview-item">
-          <span class="preview-label">Stock:</span>
-          <span class="preview-value">{{ formData.symbol }} - {{ formData.name }}</span>
-        </div>
-        <div class="preview-item">
-          <span class="preview-label">Investment:</span>
-          <span class="preview-value">{{ formatCurrency(totalInvestment) }}</span>
-        </div>
-        <div class="preview-item">
-          <span class="preview-label">Current Value:</span>
-          <span class="preview-value">{{ formatCurrency(currentValue) }}</span>
-        </div>
-        <div class="preview-item">
-          <span class="preview-label">Gain/Loss:</span>
-          <span class="preview-value" :class="gainLossClass">
-            {{ formatCurrency(gainLoss) }} ({{ gainLossPercent.toFixed(2) }}%)
-          </span>
-        </div>
+      <!-- Form Actions -->
+      <div class="form-actions">
+        <button type="button" @click="$emit('close')" class="btn btn-secondary">
+          Cancel
+        </button>
+        <button type="submit" :disabled="!isFormValid || loading" class="btn btn-primary">
+          <Loader v-if="loading" class="button-icon spinning" />
+          <Plus v-else class="button-icon" />
+          Add Position
+        </button>
       </div>
-    </div>
-
-    <!-- Form Actions -->
-    <div class="form-actions">
-      <button 
-        @click="handleSubmit" 
-        class="btn btn--primary"
-        :disabled="loading || !isFormValid"
-      >
-        <div v-if="loading" class="loading-spinner"></div>
-        <Plus v-else class="btn-icon" />
-        {{ loading ? 'Adding Position...' : 'Add Position' }}
-      </button>
-      <button 
-        @click="$emit('close')" 
-        class="btn btn--secondary"
-        :disabled="loading"
-      >
-        Cancel
-      </button>
-    </div>
+    </form>
   </div>
 </template>
 
 <script>
-import { ref, reactive, computed, watch } from 'vue'
-import { Plus, Search, RefreshCw } from 'lucide-vue-next'
-import { usePortfolioStore } from '@/stores/portfolio'
-import { useStockSearch } from '@/composables/useStockSearch'
-import { useFormatters } from '@/composables/useFormatters'
+import { ref, computed, watch } from 'vue'
+import {
+  X,
+  CheckCircle,
+  AlertCircle,
+  AlertTriangle,
+  Loader,
+  Building,
+  DollarSign,
+  TrendingUp,
+  Info,
+  Plus
+} from 'lucide-vue-next'
 import StockAutocompleteInput from './StockAutocompleteInput.vue'
+import { useStockSearch } from '@/composables/useStockSearch'
+import { usePortfolioStore } from '@/stores/portfolio'
 
 export default {
   name: 'PositionForm',
   components: {
+    X,
+    CheckCircle,
+    AlertCircle,
+    AlertTriangle,
+    Loader,
+    Building,
+    DollarSign,
+    TrendingUp,
+    Info,
     Plus,
-    Search,
-    RefreshCw,
     StockAutocompleteInput
   },
-  emits: ['close'],
+  emits: ['close', 'position-added'],
   setup(props, { emit }) {
-    const portfolioStore = usePortfolioStore()
+    // Composables
     const stockSearch = useStockSearch()
-    const { formatCurrency } = useFormatters()
-    
+    const portfolioStore = usePortfolioStore()
+
+    // Form data
+    const formData = ref({
+      symbol: '',
+      name: '',
+      shares: null,
+      purchasePrice: null,
+      currentPrice: null,
+      purchaseDate: '',
+      targetPrice: null
+    })
+
+    // UI state
     const loading = ref(false)
     const isFetchingName = ref(false)
     const isFetchingPrice = ref(false)
-    const isSymbolValid = ref(false)
     const isAutoFilled = ref(false)
     const hasLivePrice = ref(false)
     const priceSource = ref('')
 
-    const formData = reactive({
-      symbol: '',
-      name: '',
-      shares: '',
-      purchasePrice: '',
-      currentPrice: '',
-      purchaseDate: '',
-      targetPrice: ''
+    // Messages
+    const successMessage = ref('')
+    const errorMessage = ref('')
+    const warningMessage = ref('')
+
+    // Validation
+    const symbolValidation = ref({
+      message: '',
+      class: ''
     })
 
-    // Computed properties
-    const isFormValid = computed(() => {
-      return formData.symbol && 
-             formData.name && 
-             formData.shares && 
-             formData.purchasePrice && 
-             formData.currentPrice && 
-             formData.purchaseDate &&
-             isSymbolValid.value
+    // Today's date for max date validation
+    const today = computed(() => {
+      return new Date().toISOString().split('T')[0]
     })
 
-    const showPreview = computed(() => {
-      return formData.symbol && 
-             formData.name && 
-             formData.shares && 
-             formData.purchasePrice && 
-             formData.currentPrice
-    })
+    // Position summary calculations
+    const positionSummary = computed(() => {
+      const shares = parseFloat(formData.value.shares) || 0
+      const purchasePrice = parseFloat(formData.value.purchasePrice) || 0
+      const currentPrice = parseFloat(formData.value.currentPrice) || 0
 
-    const totalInvestment = computed(() => {
-      const shares = parseFloat(formData.shares) || 0
-      const price = parseFloat(formData.purchasePrice) || 0
-      return shares * price
-    })
+      if (shares > 0 && purchasePrice > 0 && currentPrice > 0) {
+        const totalInvestment = shares * purchasePrice
+        const currentValue = shares * currentPrice
+        const gainLoss = currentValue - totalInvestment
+        const gainLossPercent = ((gainLoss / totalInvestment) * 100)
 
-    const currentValue = computed(() => {
-      const shares = parseFloat(formData.shares) || 0
-      const price = parseFloat(formData.currentPrice) || 0
-      return shares * price
-    })
-
-    const gainLoss = computed(() => currentValue.value - totalInvestment.value)
-
-    const gainLossPercent = computed(() => {
-      if (totalInvestment.value === 0) return 0
-      return (gainLoss.value / totalInvestment.value) * 100
-    })
-
-    const gainLossClass = computed(() => ({
-      'gain-positive': gainLoss.value >= 0,
-      'gain-negative': gainLoss.value < 0
-    }))
-
-    // Handle stock selection from autocomplete
-    const handleStockSelected = (stock) => {
-      formData.symbol = stock.symbol
-      formData.name = stock.name
-      isAutoFilled.value = true
-      
-      // Auto-fetch current price when stock is selected
-      if (stock.symbol) {
-        fetchCurrentPrice()
-      }
-    }
-
-    // Handle symbol validation
-    const handleSymbolValidation = (validation) => {
-      isSymbolValid.value = validation.valid === true
-      
-      if (validation.valid && formData.symbol && !formData.name) {
-        fetchCompanyName()
-      }
-    }
-
-    // Fetch company name for symbol using Yahoo Finance
-    const fetchCompanyName = async () => {
-      if (!formData.symbol || isFetchingName.value) return
-
-      isFetchingName.value = true
-      
-      try {
-        const stockInfo = await stockSearch.getStockInfo(formData.symbol)
-        
-        if (stockInfo && stockInfo.name) {
-          formData.name = stockInfo.name
-          isAutoFilled.value = true
-        } else {
-          // Fallback to a basic name
-          formData.name = `${formData.symbol.toUpperCase()} Corporation`
+        return {
+          isValid: true,
+          totalInvestment: totalInvestment.toFixed(2),
+          currentValue: currentValue.toFixed(2),
+          gainLoss: gainLoss.toFixed(2),
+          gainLossPercent: gainLossPercent.toFixed(2),
+          gainLossClass: gainLoss >= 0 ? 'positive' : 'negative'
         }
-      } catch (error) {
-        console.warn('Failed to fetch company name:', error)
-        formData.name = `${formData.symbol.toUpperCase()} Corporation`
-      } finally {
-        isFetchingName.value = false
       }
+
+      return { isValid: false }
+    })
+
+    // Form validation
+    const isFormValid = computed(() => {
+      return formData.value.symbol &&
+        formData.value.name &&
+        formData.value.shares > 0 &&
+        formData.value.purchasePrice > 0 &&
+        formData.value.currentPrice > 0 &&
+        formData.value.purchaseDate
+    })
+
+    // Message helpers
+    const showSuccessMessage = (message) => {
+      successMessage.value = message
+      errorMessage.value = ''
+      warningMessage.value = ''
+      setTimeout(() => {
+        successMessage.value = ''
+      }, 3000)
     }
 
-    // Fetch current price using Yahoo Finance
+    const showErrorMessage = (message) => {
+      errorMessage.value = message
+      successMessage.value = ''
+      warningMessage.value = ''
+    }
+
+    const showWarningMessage = (message) => {
+      warningMessage.value = message
+      successMessage.value = ''
+      errorMessage.value = ''
+      setTimeout(() => {
+        warningMessage.value = ''
+      }, 3000)
+    }
+
+    const clearMessages = () => {
+      successMessage.value = ''
+      errorMessage.value = ''
+      warningMessage.value = ''
+    }
+
+    // Enhanced fetchCurrentPrice method
     const fetchCurrentPrice = async () => {
-      if (!formData.symbol || isFetchingPrice.value) return
+      if (!formData.value.symbol || isFetchingPrice.value) return
 
       isFetchingPrice.value = true
       hasLivePrice.value = false
       priceSource.value = ''
-      
+      clearMessages()
+
       try {
-        console.log(`📊 Fetching live price for ${formData.symbol} from Yahoo Finance`)
-        const priceData = await stockSearch.getCurrentPrice(formData.symbol)
-        
-        if (priceData && priceData.price) {
-          formData.currentPrice = priceData.price.toString()
+        console.log(`📊 Fetching live price for ${formData.value.symbol} from Yahoo Finance`)
+
+        const priceData = await stockSearch.getCurrentPrice(formData.value.symbol)
+
+        if (priceData && priceData.price && priceData.price > 0) {
+          formData.value.currentPrice = priceData.price
           hasLivePrice.value = true
           priceSource.value = priceData.source || 'Yahoo Finance'
-          console.log(`✅ Got price ${priceData.price} for ${formData.symbol}`)
+
+          console.log(`✅ Got price $${priceData.price} for ${formData.value.symbol}`)
+          showSuccessMessage(`✅ Current price: $${priceData.price}`)
+
         } else {
-          throw new Error('No price data received')
+          throw new Error('No valid price data received')
         }
       } catch (error) {
-        console.warn('Failed to fetch current price:', error)
-        alert(`Failed to fetch current price for ${formData.symbol}. Please enter manually.\n\nError: ${error.message}`)
+        console.warn('Failed to fetch current price:', error.message)
+
+        let userMessage = `Unable to fetch current price for ${formData.value.symbol}.`
+
+        if (error.message.includes('not found') || error.message.includes('verify the symbol')) {
+          userMessage += ' Please verify the symbol is correct.'
+        } else if (error.message.includes('delisted') || error.message.includes('no longer trading')) {
+          userMessage += ' This stock may be delisted or no longer trading.'
+        } else if (error.message.includes('market is closed') || error.message.includes('data unavailable')) {
+          userMessage += ' Markets may be closed or data temporarily unavailable.'
+        } else if (error.message.includes('connection') || error.message.includes('service')) {
+          userMessage += ' There\'s a connection issue with the price service.'
+        } else {
+          userMessage += ' Please enter the price manually.'
+        }
+
+        showErrorMessage(userMessage)
+        hasLivePrice.value = false
+        priceSource.value = ''
+
       } finally {
         isFetchingPrice.value = false
       }
     }
 
+    // Enhanced fetchCompanyName method
+    const fetchCompanyName = async () => {
+      if (!formData.value.symbol || isFetchingName.value) return
+
+      isFetchingName.value = true
+      clearMessages()
+
+      try {
+        console.log(`🏢 Fetching company name for ${formData.value.symbol}`)
+
+        const stockInfo = await stockSearch.getStockInfo(formData.value.symbol)
+
+        if (stockInfo && stockInfo.name) {
+          formData.value.name = stockInfo.name
+          isAutoFilled.value = true
+          console.log(`✅ Found company name: ${stockInfo.name} for ${formData.value.symbol}`)
+          showSuccessMessage(`✅ Company: ${stockInfo.name}`)
+        } else {
+          // Fallback to basic name format
+          formData.value.name = `${formData.value.symbol.toUpperCase()} Corporation`
+          console.log(`⚠️ Using fallback name for ${formData.value.symbol}`)
+          showWarningMessage(`Using fallback name for ${formData.value.symbol}`)
+        }
+      } catch (error) {
+        console.warn('Failed to fetch company name:', error.message)
+
+        formData.value.name = `${formData.value.symbol.toUpperCase()} Corporation`
+        showWarningMessage(`Could not fetch company name. Using fallback: ${formData.value.name}`)
+      } finally {
+        isFetchingName.value = false
+      }
+    }
+
+    // Enhanced form validation
+    const validateForm = () => {
+      const errors = []
+
+      if (!formData.value.symbol || formData.value.symbol.trim().length === 0) {
+        errors.push('Stock symbol is required')
+      }
+
+      if (!formData.value.name || formData.value.name.trim().length === 0) {
+        errors.push('Company name is required')
+      }
+
+      if (!formData.value.shares || formData.value.shares <= 0) {
+        errors.push('Number of shares must be greater than 0')
+      }
+
+      if (!formData.value.purchasePrice || formData.value.purchasePrice <= 0) {
+        errors.push('Purchase price must be greater than 0')
+      }
+
+      if (!formData.value.currentPrice || formData.value.currentPrice <= 0) {
+        errors.push('Current price must be greater than 0')
+      }
+
+      if (!formData.value.purchaseDate) {
+        errors.push('Purchase date is required')
+      }
+
+      if (errors.length > 0) {
+        showErrorMessage('Please fix the following errors:\n' + errors.join('\n'))
+        return false
+      }
+
+      return true
+    }
+
+    // Enhanced form submission
+    const handleSubmit = async () => {
+      if (!validateForm()) {
+        return
+      }
+
+      loading.value = true
+      clearMessages()
+
+      try {
+        // Add a small delay for better UX
+        await new Promise(resolve => setTimeout(resolve, 500))
+
+        const positionData = {
+          symbol: formData.value.symbol.toUpperCase(),
+          name: formData.value.name,
+          shares: parseFloat(formData.value.shares),
+          purchasePrice: parseFloat(formData.value.purchasePrice),
+          currentPrice: parseFloat(formData.value.currentPrice),
+          purchaseDate: formData.value.purchaseDate,
+          targetPrice: formData.value.targetPrice ? parseFloat(formData.value.targetPrice) : null,
+          // Add metadata
+          priceSource: priceSource.value,
+          addedAt: new Date().toISOString(),
+          hasLivePrice: hasLivePrice.value,
+          id: Date.now().toString() // Simple ID generation
+        }
+
+        // Add to portfolio store
+        portfolioStore.addPosition(positionData)
+
+        showSuccessMessage(`✅ Added ${formData.value.symbol} to your portfolio!`)
+
+        // Emit events
+        emit('position-added', positionData)
+
+        // Close form after short delay
+        setTimeout(() => {
+          emit('close')
+        }, 1000)
+
+      } catch (error) {
+        console.error('Error saving position:', error)
+        showErrorMessage('Error saving position. Please try again.')
+      } finally {
+        loading.value = false
+      }
+    }
+
+    // Stock selection handler
+    const onStockSelected = (stock) => {
+      console.log('Stock selected:', stock)
+      formData.value.symbol = stock.symbol
+      formData.value.name = stock.name
+      isAutoFilled.value = true
+
+      // Clear previous price data
+      hasLivePrice.value = false
+      priceSource.value = ''
+    }
+
+    // Validation change handler
+    const onValidationChange = (validation) => {
+      if (validation.valid === true) {
+        symbolValidation.value = {
+          message: `✓ ${validation.symbol} is valid`,
+          class: 'success'
+        }
+      } else if (validation.valid === false) {
+        symbolValidation.value = {
+          message: `⚠ ${validation.symbol} may not be valid`,
+          class: 'warning'
+        }
+      } else {
+        symbolValidation.value = {
+          message: '',
+          class: ''
+        }
+      }
+    }
+
     // Watch symbol changes to clear auto-filled state
-    watch(() => formData.symbol, (newSymbol, oldSymbol) => {
+    watch(() => formData.value.symbol, (newSymbol, oldSymbol) => {
       if (newSymbol !== oldSymbol) {
         isAutoFilled.value = false
         hasLivePrice.value = false
@@ -354,61 +496,29 @@ export default {
       }
     })
 
-    // Handle form submission
-    const handleSubmit = async () => {
-      if (!isFormValid.value) {
-        alert('Please fill in all required fields with valid data')
-        return
-      }
-
-      loading.value = true
-
-      try {
-        // Simulate API delay
-        await new Promise(resolve => setTimeout(resolve, 500))
-
-        const positionData = {
-          symbol: formData.symbol.toUpperCase(),
-          name: formData.name,
-          shares: parseFloat(formData.shares),
-          purchasePrice: parseFloat(formData.purchasePrice),
-          currentPrice: parseFloat(formData.currentPrice),
-          purchaseDate: formData.purchaseDate,
-          targetPrice: formData.targetPrice ? parseFloat(formData.targetPrice) : null
-        }
-
-        portfolioStore.addPosition(positionData)
-        emit('close')
-      } catch (error) {
-        console.error('Error saving position:', error)
-        alert('Error saving position. Please try again.')
-      } finally {
-        loading.value = false
-      }
-    }
-
     return {
       formData,
       loading,
       isFetchingName,
       isFetchingPrice,
-      isSymbolValid,
       isAutoFilled,
       hasLivePrice,
       priceSource,
+      successMessage,
+      errorMessage,
+      warningMessage,
+      symbolValidation,
+      today,
+      positionSummary,
       isFormValid,
-      showPreview,
-      totalInvestment,
-      currentValue,
-      gainLoss,
-      gainLossPercent,
-      gainLossClass,
-      handleStockSelected,
-      handleSymbolValidation,
-      fetchCompanyName,
       fetchCurrentPrice,
+      fetchCompanyName,
       handleSubmit,
-      formatCurrency
+      onStockSelected,
+      onValidationChange,
+      showSuccessMessage,
+      showErrorMessage,
+      showWarningMessage
     }
   }
 }
@@ -416,288 +526,344 @@ export default {
 
 <style lang="scss" scoped>
 .position-form {
-  margin-top: $spacing-lg;
-  padding: $spacing-lg;
-  border: 1px solid $gray-200;
-  border-radius: $radius;
-  background: $gray-50;
+  max-width: 800px;
+  margin: 0 auto;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
 }
 
-.form-title {
-  margin-bottom: $spacing-lg;
-  color: $gray-900;
-  font-size: $font-size-lg;
-  font-weight: 700;
-}
+.form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 32px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
 
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: $spacing-md;
-  margin-bottom: $spacing-lg;
-
-  @include mobile {
-    grid-template-columns: 1fr;
+  h2 {
+    margin: 0;
+    color: #1e293b;
+    font-size: 24px;
+    font-weight: 600;
   }
+}
+
+.close-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  color: #64748b;
+  transition: all 0.2s;
+
+  &:hover {
+    background: #e2e8f0;
+    color: #334155;
+  }
+}
+
+.close-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 32px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+
+  &.success-message {
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+  }
+
+  &.error-message {
+    background: #fef2f2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+  }
+
+  &.warning-message {
+    background: #fefce8;
+    color: #ca8a04;
+    border: 1px solid #fef3c7;
+  }
+}
+
+.message-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.form {
+  padding: 32px;
 }
 
 .form-group {
-  &--symbol,
-  &--name {
-    @include mobile {
-      grid-column: 1;
-    }
-  }
+  margin-bottom: 24px;
+}
 
-  .form-label {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: $spacing-xs;
-    font-size: $font-size-sm;
-    font-weight: 500;
-    color: $gray-700;
+.form-label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #374151;
+  font-size: 14px;
 
-    .help-text {
-      font-size: $font-size-xs;
-      color: $gray-500;
-      font-weight: 400;
-    }
-
-    .auto-filled {
-      font-size: $font-size-xs;
-      color: $success;
-      font-weight: 600;
-    }
-  }
-
-  .form-input {
-    width: 100%;
-    padding: $spacing-sm $spacing-md;
-    border: 1px solid $gray-300;
-    border-radius: $radius;
-    font-size: $font-size-sm;
-    transition: border-color 0.2s ease;
-
-    &:focus {
-      outline: none;
-      border-color: $primary;
-      box-shadow: 0 0 0 3px rgba($primary, 0.1);
-    }
-
-    &.auto-filled {
-      background: rgba($success, 0.05);
-      border-color: $success;
-    }
-
-    &.live-price {
-      background: rgba($primary, 0.05);
-      border-color: $primary;
-    }
-
-    &:disabled {
-      background: $gray-100;
-      color: $gray-500;
-      cursor: not-allowed;
-    }
+  &.required::after {
+    content: ' *';
+    color: #dc2626;
   }
 }
 
-.name-input-container {
+.form-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 16px;
+  transition: border-color 0.2s;
+
+  &:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  &.auto-filled {
+    background-color: #f0f9ff;
+    border-color: #0ea5e9;
+  }
+
+  &.live-price {
+    background-color: #f0fdf4;
+    border-color: #22c55e;
+  }
+}
+
+.input-with-button {
   display: flex;
-  gap: $spacing-sm;
-  align-items: stretch;
-
-  .form-input {
-    flex: 1;
-  }
+  gap: 12px;
 }
 
-.price-input-container {
+.currency-input {
   position: relative;
-  display: flex;
-  align-items: center;
-
-  .currency-symbol {
-    position: absolute;
-    left: $spacing-sm;
-    color: $gray-500;
-    font-weight: 500;
-    z-index: 1;
-  }
-
-  .price-input {
-    padding-left: 1.75rem;
-  }
-
-  .price-source {
-    position: absolute;
-    right: $spacing-sm;
-    font-size: $font-size-xs;
-    color: $gray-500;
-    background: $white;
-    padding: 0 $spacing-xs;
-  }
+  flex: 1;
 }
 
-.fetch-name-btn,
-.fetch-price-btn {
+.currency-symbol {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #64748b;
+  font-weight: 500;
+}
+
+.currency-input-field {
+  padding-left: 32px;
+}
+
+.fetch-button {
   display: flex;
   align-items: center;
-  gap: $spacing-xs;
-  padding: $spacing-xs $spacing-sm;
-  background: $primary;
-  color: $white;
-  border: none;
-  border-radius: $radius;
-  font-size: $font-size-xs;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #f1f5f9;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
   font-weight: 500;
+  color: #475569;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s;
   white-space: nowrap;
 
   &:hover:not(:disabled) {
-    background: $primary-hover;
+    background: #e2e8f0;
+    border-color: #cbd5e1;
   }
 
   &:disabled {
-    opacity: 0.5;
+    opacity: 0.6;
     cursor: not-allowed;
   }
+}
 
-  .btn-icon {
-    width: 0.875rem;
-    height: 0.875rem;
+.button-icon {
+  width: 16px;
+  height: 16px;
+
+  &.spinning {
+    animation: spin 1s linear infinite;
   }
 }
 
-.fetch-price-btn {
-  background: none;
-  color: $primary;
-  border: 1px solid $primary;
-  margin-left: $spacing-xs;
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
 
-  &:hover:not(:disabled) {
-    background: $primary;
-    color: $white;
+  100% {
+    transform: rotate(360deg);
   }
 }
 
-.position-preview {
-  background: $white;
-  border: 1px solid $gray-200;
-  border-radius: $radius;
-  padding: $spacing-md;
-  margin-bottom: $spacing-lg;
+.auto-fill-notice,
+.live-price-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #059669;
+}
 
-  .preview-title {
-    font-size: $font-size-sm;
+.info-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.validation-message {
+  margin-top: 6px;
+  font-size: 12px;
+
+  &.success {
+    color: #059669;
+  }
+
+  &.warning {
+    color: #d97706;
+  }
+
+  &.error {
+    color: #dc2626;
+  }
+}
+
+.position-summary {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+
+  h3 {
+    margin: 0 0 16px 0;
+    color: #1e293b;
+    font-size: 16px;
     font-weight: 600;
-    color: $gray-700;
-    margin-bottom: $spacing-sm;
-    text-transform: uppercase;
-    letter-spacing: 0.025em;
+  }
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.summary-label {
+  font-size: 14px;
+  color: #64748b;
+}
+
+.summary-value {
+  font-weight: 600;
+  font-size: 14px;
+
+  &.positive {
+    color: #059669;
   }
 
-  .preview-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: $spacing-sm;
-
-    @include mobile {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .preview-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: $spacing-xs 0;
-  }
-
-  .preview-label {
-    font-size: $font-size-sm;
-    color: $gray-600;
-  }
-
-  .preview-value {
-    font-size: $font-size-sm;
-    font-weight: 600;
-    color: $gray-900;
-
-    &.gain-positive {
-      color: $success;
-    }
-
-    &.gain-negative {
-      color: $danger;
-    }
+  &.negative {
+    color: #dc2626;
   }
 }
 
 .form-actions {
   display: flex;
-  gap: $spacing-sm;
+  gap: 12px;
   justify-content: flex-end;
-
-  @include mobile {
-    flex-direction: column;
-  }
+  padding-top: 24px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .btn {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: $spacing-xs;
-  padding: $spacing-sm $spacing-md;
-  border: none;
-  border-radius: $radius;
-  font-size: $font-size-sm;
-  font-weight: 500;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s;
+  border: none;
 
   &:disabled {
-    opacity: 0.5;
+    opacity: 0.6;
     cursor: not-allowed;
   }
 
-  &--primary {
-    background: $primary;
-    color: $white;
+  &.btn-secondary {
+    background: #f1f5f9;
+    color: #475569;
 
     &:hover:not(:disabled) {
-      background: $primary-hover;
+      background: #e2e8f0;
     }
   }
 
-  &--secondary {
-    background: $white;
-    color: $gray-700;
-    border: 1px solid $gray-300;
+  &.btn-primary {
+    background: #3b82f6;
+    color: white;
 
     &:hover:not(:disabled) {
-      background: $gray-50;
+      background: #2563eb;
     }
   }
+}
 
-  .btn-icon {
-    width: 1rem;
-    height: 1rem;
+@media (max-width: 768px) {
+  .position-form {
+    margin: 16px;
   }
-}
 
-.loading-spinner {
-  width: 1rem;
-  height: 1rem;
-  border: 2px solid rgba($white, 0.3);
-  border-radius: 50%;
-  border-top-color: currentColor;
-  animation: spin 1s linear infinite;
-}
+  .form-header,
+  .form {
+    padding: 16px;
+  }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+  .input-with-button {
+    flex-direction: column;
+  }
+
+  .fetch-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
 }
 </style>
